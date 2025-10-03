@@ -253,6 +253,72 @@ You can also use the bfl://images/${initResponse.id} resource to view the image 
   }
 );
 
+// Tool to download image to disk
+server.registerTool("download_image",
+  {
+    title: "Download Image to Disk",
+    description: "Download the image associated with a specific request ID to a file on disk",
+    inputSchema: {
+      request_id: z.string().describe("The request ID of the image generation"),
+      file_path: z.string().describe("The file path where the image should be saved")
+    }
+  },
+  async ({ request_id, file_path }) => {
+    try {
+      const result = await getResultById(request_id);
+
+      if (result.status === "Error") {
+        return {
+          content: [{ type: "text", text: `Image generation failed: ${result.error}` }]
+        };
+      }
+
+      if (result.status === "Pending") {
+        return {
+          content: [{ type: "text", text: `Image generation is still pending. Please wait for it to complete.` }]
+        };
+      }
+
+      if (!result.result?.sample) {
+        return {
+          content: [{ type: "text", text: `No image URL found in result` }]
+        };
+      }
+
+      // Fetch the image from the signed URL
+      const imageResponse = await fetch(result.result.sample);
+
+      if (!imageResponse.ok) {
+        return {
+          content: [{ type: "text", text: `Failed to fetch image: ${imageResponse.status} ${imageResponse.statusText}` }]
+        };
+      }
+
+      // Stream directly to file
+      const fs = await import('fs');
+      const { pipeline } = await import('stream/promises');
+      const { Readable } = await import('stream');
+
+      if (!imageResponse.body) {
+        return {
+          content: [{ type: "text", text: `No response body available` }]
+        };
+      }
+
+      const writeStream = fs.createWriteStream(file_path);
+      await pipeline(Readable.fromWeb(imageResponse.body as any), writeStream);
+
+      return {
+        content: [{ type: "text", text: `Image downloaded successfully to ${file_path}` }]
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Failed to download image: ${error}` }]
+      };
+    }
+  }
+);
+
 // Resource to get details of a specific request
 server.registerResource("request_details", new ResourceTemplate("bfl://requests/{requestId}", {
   list: undefined,
