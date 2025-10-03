@@ -19,20 +19,23 @@ const server = new McpServer({
   version: "0.1.0",
 });
 
-// Types for API responses
-interface ImageGenerationResponse {
-  id: string;
-  polling_url: string;
-}
+// Zod schemas for API responses
+const imageGenerationResponseSchema = z.object({
+  id: z.string(),
+  polling_url: z.string()
+});
 
-interface ResultResponse {
-  id: string;
-  status: "Pending" | "Ready" | "Error";
-  result?: {
-    sample: string;
-  };
-  error?: string;
-}
+const resultResponseSchema = z.object({
+  id: z.string(),
+  status: z.enum(["Pending", "Ready", "Error"]),
+  result: z.object({
+    sample: z.string()
+  }).optional(),
+  error: z.string().optional()
+});
+
+type ImageGenerationResponse = z.infer<typeof imageGenerationResponseSchema>;
+type ResultResponse = z.infer<typeof resultResponseSchema>;
 
 // Helper function to make API requests
 async function makeBFLRequest(endpoint: string, body: Record<string, unknown>): Promise<ImageGenerationResponse> {
@@ -50,7 +53,8 @@ async function makeBFLRequest(endpoint: string, body: Record<string, unknown>): 
     throw new Error(`BFL API error (${response.status}): ${errorText}`);
   }
 
-  return await response.json() as ImageGenerationResponse;
+  const json = await response.json();
+  return imageGenerationResponseSchema.parse(json);
 }
 
 // Helper function to get result by request ID using the BFL API
@@ -67,7 +71,8 @@ async function getResultById(requestId: string): Promise<ResultResponse> {
     throw new Error(`BFL API error (${response.status}): ${errorText}`);
   }
 
-  return await response.json() as ResultResponse;
+  const json = await response.json();
+  return resultResponseSchema.parse(json);
 }
 
 // Helper function to poll for results using polling URL
@@ -84,7 +89,8 @@ async function getResult(pollingUrl: string): Promise<ResultResponse> {
     throw new Error(`BFL API error (${response.status}): ${errorText}`);
   }
 
-  return await response.json() as ResultResponse;
+  const json = await response.json();
+  return resultResponseSchema.parse(json);
 }
 
 // Helper function to poll until completion
