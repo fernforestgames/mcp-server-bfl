@@ -5,7 +5,7 @@ A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that pr
 ## Features
 
 - Tool to generate images using FLUX models
-- Resource to check request status and find generated images
+- Resources to check request status and download generated images
 
 ## Prerequisites
 
@@ -40,7 +40,7 @@ Once configured, you can ask your AI assistant to generate images:
 - "Generate an image of a sunset over mountains"
 - "Create a high-resolution photo of a cat using FLUX Pro Ultra"
 
-By default, the server automatically polls the BFL API until image generation is complete and returns the image URL (valid for 10 minutes).
+By default, the server automatically polls the BFL API until image generation is complete and returns the image URL (valid for 10 minutes). You can also ask your AI assistant to download the image result directly.
 
 ## License
 

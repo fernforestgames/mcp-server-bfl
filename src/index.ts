@@ -269,6 +269,57 @@ server.registerResource("request_details", new ResourceTemplate("bfl://requests/
   }
 );
 
+// Resource to download the image associated with a request
+server.registerResource("image", new ResourceTemplate("bfl://images/{requestId}", {
+  list: undefined,
+}),
+  {
+    title: "Image Download",
+    description: "Download the image associated with a specific request",
+  },
+  async (uri, { requestId }) => {
+    try {
+      const result = await getResultById(requestId as string);
+
+      if (result.status === "Error") {
+        throw new Error(`Image generation failed: ${result.error}`);
+      }
+
+      if (result.status === "Pending") {
+        throw new Error(`Image generation is still pending`);
+      }
+
+      if (!result.result?.sample) {
+        throw new Error(`No image URL found in result`);
+      }
+
+      // Fetch the image from the signed URL
+      const imageResponse = await fetch(result.result.sample);
+
+      if (!imageResponse.ok) {
+        throw new Error(`Failed to fetch image: ${imageResponse.status} ${imageResponse.statusText}`);
+      }
+
+      // Determine MIME type from Content-Type header
+      let mimeType = imageResponse.headers.get('content-type') || 'image/jpeg';
+
+      // Get the image as base64
+      const imageBuffer = await imageResponse.arrayBuffer();
+      const base64Image = Buffer.from(imageBuffer).toString('base64');
+
+      return {
+        contents: [{
+          uri: uri.href,
+          mimeType: mimeType,
+          blob: base64Image
+        }]
+      };
+    } catch (error) {
+      throw new Error(`Failed to download image: ${error}`);
+    }
+  }
+);
+
 // Start receiving messages on stdin and sending messages on stdout
 const transport = new StdioServerTransport();
 await server.connect(transport);
