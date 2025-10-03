@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "bfl": {
+      "type": "stdio",
+      "command": "npm",
+      "args": [
+        "run",
+        "dev"
+      ],
+      "env": {}
+    }
+  }
+}
