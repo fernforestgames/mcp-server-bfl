@@ -19,25 +19,7 @@ const server = new McpServer({
   version: "0.1.0",
 });
 
-// Types for image generation
-interface ImageGenerationRequest {
-  prompt?: string;
-  image_prompt?: string;
-  input_image?: string;
-  input_image_2?: string;
-  input_image_3?: string;
-  input_image_4?: string;
-  aspect_ratio?: string;
-  width?: number;
-  height?: number;
-  seed?: number;
-  prompt_upsampling?: boolean;
-  safety_tolerance?: number;
-  output_format?: string;
-  raw?: boolean;
-  image_prompt_strength?: number;
-}
-
+// Types for API responses
 interface ImageGenerationResponse {
   id: string;
   polling_url: string;
@@ -53,7 +35,7 @@ interface ResultResponse {
 }
 
 // Helper function to make API requests
-async function makeBFLRequest(endpoint: string, body: ImageGenerationRequest): Promise<ImageGenerationResponse> {
+async function makeBFLRequest(endpoint: string, body: Record<string, unknown>): Promise<ImageGenerationResponse> {
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
     method: "POST",
     headers: {
@@ -129,41 +111,86 @@ const MODEL_ENDPOINTS: Record<string, string> = {
   "flux-kontext-max": "/v1/flux-kontext-max"
 };
 
+// Common parameters shared across all models
+const commonParams = {
+  wait: z.boolean().default(true).describe("Whether to wait for generation to complete. If true, polls until ready. If false, returns request ID immediately"),
+  seed: z.number().optional().describe("Seed for reproducibility"),
+  prompt_upsampling: z.boolean().optional().describe("Whether to perform upsampling on the prompt"),
+  safety_tolerance: z.number().optional().describe("Safety tolerance level (0-6, default: 2)"),
+  output_format: z.enum(['jpeg', 'png']).optional().describe("Output format (default: 'jpeg' for flux-pro/pro-ultra, 'png' for kontext models)")
+};
+
+// Define schemas for each model type
+const fluxDevSchema = z.object({
+  model: z.literal('flux-dev'),
+  prompt: z.string().describe("Text description of the desired image"),
+  width: z.number().optional().describe("Image width in pixels (256-1440, multiple of 32)"),
+  height: z.number().optional().describe("Image height in pixels (256-1440, multiple of 32)"),
+  ...commonParams
+});
+
+const fluxProSchema = z.object({
+  model: z.literal('flux-pro'),
+  prompt: z.string().describe("Text description of the desired image"),
+  width: z.number().optional().describe("Image width in pixels (256-1440, multiple of 32)"),
+  height: z.number().optional().describe("Image height in pixels (256-1440, multiple of 32)"),
+  image_prompt: z.string().optional().describe("Base64 encoded image for Flux Redux"),
+  ...commonParams
+});
+
+const fluxProUltraSchema = z.object({
+  model: z.literal('flux-pro-ultra'),
+  prompt: z.string().describe("Text description of the desired image"),
+  aspect_ratio: z.string().optional().describe("Image aspect ratio (e.g., '1:1', '16:9', '9:16', '21:9')"),
+  image_prompt: z.string().optional().describe("Base64 encoded image for Flux Redux or image remixing"),
+  image_prompt_strength: z.number().optional().describe("Blend strength between prompt and image_prompt (0-1, default: 0.1)"),
+  raw: z.boolean().optional().describe("Generate less processed, more natural-looking images"),
+  ...commonParams
+});
+
+const fluxKontextProSchema = z.object({
+  model: z.literal('flux-kontext-pro'),
+  prompt: z.string().describe("Text description of the desired image"),
+  aspect_ratio: z.string().optional().describe("Image aspect ratio (e.g., '1:1', '16:9', '9:16', '21:9')"),
+  input_image: z.string().optional().describe("Base64 encoded image or URL to use with Kontext"),
+  input_image_2: z.string().optional().describe("Additional reference image for experimental Multiref"),
+  input_image_3: z.string().optional().describe("Additional reference image for experimental Multiref"),
+  input_image_4: z.string().optional().describe("Additional reference image for experimental Multiref"),
+  ...commonParams
+});
+
+const fluxKontextMaxSchema = z.object({
+  model: z.literal('flux-kontext-max'),
+  prompt: z.string().describe("Text description of the desired image"),
+  aspect_ratio: z.string().optional().describe("Image aspect ratio (e.g., '1:1', '16:9', '9:16', '21:9')"),
+  input_image: z.string().optional().describe("Base64 encoded image or URL to use with Kontext"),
+  input_image_2: z.string().optional().describe("Additional reference image for experimental Multiref"),
+  input_image_3: z.string().optional().describe("Additional reference image for experimental Multiref"),
+  input_image_4: z.string().optional().describe("Additional reference image for experimental Multiref"),
+  ...commonParams
+});
+
+// Union all schemas with discriminated union on 'model'
+const generateImageSchema = {
+  params: z.discriminatedUnion('model', [
+    fluxDevSchema,
+    fluxProSchema,
+    fluxProUltraSchema,
+    fluxKontextProSchema,
+    fluxKontextMaxSchema
+  ])
+};
+
 // Tool to generate images
 server.registerTool("generate_image",
   {
     title: "Generate Image",
     description: "Generate an image using a FLUX model. By default waits for completion and returns the image URL. Set wait=false to return immediately with request ID.",
-    inputSchema: {
-      prompt: z.string().describe("Text description of the desired image"),
-      model: z.enum(['flux-dev', 'flux-pro', 'flux-pro-ultra', 'flux-kontext-pro', 'flux-kontext-max']).describe("Model to use for generation: 'flux-dev' (FLUX.1 [dev]), 'flux-pro' (FLUX 1.1 [pro]), 'flux-pro-ultra' (FLUX 1.1 [pro] Ultra), 'flux-kontext-pro' (FLUX Kontext Pro), 'flux-kontext-max' (FLUX Kontext Max)"),
-      wait: z.boolean().default(true).describe("Whether to wait for generation to complete. If true, polls until ready. If false, returns request ID immediately"),
-
-      // Image inputs
-      image_prompt: z.string().optional().describe("Base64 encoded image for Flux Redux (flux-pro, flux-pro-ultra) or image remixing (flux-pro-ultra)"),
-      input_image: z.string().optional().describe("Base64 encoded image or URL to use with Kontext (flux-kontext-pro, flux-kontext-max)"),
-      input_image_2: z.string().optional().describe("Additional reference image for experimental Multiref (flux-kontext-pro, flux-kontext-max)"),
-      input_image_3: z.string().optional().describe("Additional reference image for experimental Multiref (flux-kontext-pro, flux-kontext-max)"),
-      input_image_4: z.string().optional().describe("Additional reference image for experimental Multiref (flux-kontext-pro, flux-kontext-max)"),
-
-      // Dimensions
-      aspect_ratio: z.string().optional().describe("Image aspect ratio (e.g., '1:1', '16:9', '9:16', '21:9'). Used by flux-pro-ultra, flux-kontext-pro, flux-kontext-max"),
-      width: z.number().optional().describe("Image width in pixels (256-1440, multiple of 32). Used by flux-pro"),
-      height: z.number().optional().describe("Image height in pixels (256-1440, multiple of 32). Used by flux-pro"),
-
-      // Generation parameters
-      seed: z.number().optional().describe("Seed for reproducibility. Optional for all models"),
-      prompt_upsampling: z.boolean().optional().describe("Whether to perform upsampling on the prompt. Available for all models"),
-      safety_tolerance: z.number().optional().describe("Safety tolerance level (0-6, default: 2). Available for all models"),
-      output_format: z.enum(['jpeg', 'png']).optional().describe("Output format (default: 'jpeg' for flux-pro/pro-ultra, 'png' for kontext models)"),
-
-      // Pro Ultra specific
-      raw: z.boolean().optional().describe("Generate less processed, more natural-looking images. Only for flux-pro-ultra"),
-      image_prompt_strength: z.number().optional().describe("Blend strength between prompt and image_prompt (0-1, default: 0.1). Only for flux-pro-ultra")
-    }
+    inputSchema: generateImageSchema
   },
-  async ({ prompt, model, wait, image_prompt, input_image, input_image_2, input_image_3, input_image_4, aspect_ratio, width, height, seed, prompt_upsampling, safety_tolerance, output_format, raw, image_prompt_strength }) => {
+  async ({ params }) => {
     try {
+      const { model, wait } = params;
       const endpoint = MODEL_ENDPOINTS[model];
       if (!endpoint) {
         return {
@@ -171,23 +198,9 @@ server.registerTool("generate_image",
         };
       }
 
-      const requestBody: ImageGenerationRequest = {
-        ...(prompt && { prompt }),
-        ...(image_prompt && { image_prompt }),
-        ...(input_image && { input_image }),
-        ...(input_image_2 && { input_image_2 }),
-        ...(input_image_3 && { input_image_3 }),
-        ...(input_image_4 && { input_image_4 }),
-        ...(aspect_ratio && { aspect_ratio }),
-        ...(width && { width }),
-        ...(height && { height }),
-        ...(seed !== undefined && { seed }),
-        ...(prompt_upsampling !== undefined && { prompt_upsampling }),
-        ...(safety_tolerance !== undefined && { safety_tolerance }),
-        ...(output_format && { output_format }),
-        ...(raw !== undefined && { raw }),
-        ...(image_prompt_strength !== undefined && { image_prompt_strength })
-      };
+      // Build request body - spread params directly since Zod already validated them
+      // Exclude 'model' and 'wait' which are not part of the API request
+      const { model: _, wait: __, ...requestBody } = params;
 
       const initResponse = await makeBFLRequest(endpoint, requestBody);
 
