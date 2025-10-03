@@ -30,8 +30,8 @@ const resultResponseSchema = z.object({
   status: z.enum(["Pending", "Ready", "Error"]),
   result: z.object({
     sample: z.string()
-  }).optional(),
-  error: z.string().optional()
+  }).nullish(),
+  error: z.string().nullish()
 });
 
 type ImageGenerationResponse = z.infer<typeof imageGenerationResponseSchema>;
