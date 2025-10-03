@@ -21,16 +21,26 @@ const server = new McpServer({
 
 // Types for image generation
 interface ImageGenerationRequest {
-  prompt: string;
+  prompt?: string;
+  image_prompt?: string;
+  input_image?: string;
+  input_image_2?: string;
+  input_image_3?: string;
+  input_image_4?: string;
   aspect_ratio?: string;
   width?: number;
   height?: number;
-  num_images?: number;
+  seed?: number;
+  prompt_upsampling?: boolean;
   safety_tolerance?: number;
+  output_format?: string;
+  raw?: boolean;
+  image_prompt_strength?: number;
 }
 
 interface ImageGenerationResponse {
   id: string;
+  polling_url: string;
 }
 
 interface ResultResponse {
@@ -42,19 +52,8 @@ interface ResultResponse {
   error?: string;
 }
 
-// Storage for active requests
-const activeRequests = new Map<string, {
-  id: string;
-  model: string;
-  prompt: string;
-  status: string;
-  result?: string;
-  error?: string;
-  createdAt: Date;
-}>();
-
 // Helper function to make API requests
-async function makeBFLRequest(endpoint: string, body: Record<string, unknown>): Promise<ImageGenerationResponse> {
+async function makeBFLRequest(endpoint: string, body: ImageGenerationRequest): Promise<ImageGenerationResponse> {
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
     method: "POST",
     headers: {
@@ -72,12 +71,28 @@ async function makeBFLRequest(endpoint: string, body: Record<string, unknown>): 
   return await response.json() as ImageGenerationResponse;
 }
 
-// Helper function to poll for results
-async function getResult(requestId: string): Promise<ResultResponse> {
+// Helper function to get result by request ID using the BFL API
+async function getResultById(requestId: string): Promise<ResultResponse> {
   const response = await fetch(`${API_BASE_URL}/v1/get_result?id=${requestId}`, {
     method: "GET",
     headers: {
-      "accept": "application/json",
+      "x-key": apiKey,
+    },
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`BFL API error (${response.status}): ${errorText}`);
+  }
+
+  return await response.json() as ResultResponse;
+}
+
+// Helper function to poll for results using polling URL
+async function getResult(pollingUrl: string): Promise<ResultResponse> {
+  const response = await fetch(pollingUrl, {
+    method: "GET",
+    headers: {
       "x-key": apiKey,
     },
   });
@@ -91,9 +106,9 @@ async function getResult(requestId: string): Promise<ResultResponse> {
 }
 
 // Helper function to poll until completion
-async function pollUntilComplete(requestId: string, maxAttempts = 60, intervalMs = 2000): Promise<ResultResponse> {
+async function pollUntilComplete(pollingUrl: string, maxAttempts = 60, intervalMs = 2000): Promise<ResultResponse> {
   for (let i = 0; i < maxAttempts; i++) {
-    const result = await getResult(requestId);
+    const result = await getResult(pollingUrl);
 
     if (result.status === "Ready" || result.status === "Error") {
       return result;
@@ -105,57 +120,94 @@ async function pollUntilComplete(requestId: string, maxAttempts = 60, intervalMs
   throw new Error(`Polling timeout after ${maxAttempts} attempts`);
 }
 
-// Tool to generate images with FLUX.1 [dev]
-server.registerTool("generate_image_flux_dev",
+// Model endpoint mapping
+const MODEL_ENDPOINTS: Record<string, string> = {
+  "flux-dev": "/v1/flux-dev",
+  "flux-pro": "/v1/flux-pro-1.1",
+  "flux-pro-ultra": "/v1/flux-pro-1.1-ultra",
+  "flux-kontext-pro": "/v1/flux-kontext-pro",
+  "flux-kontext-max": "/v1/flux-kontext-max"
+};
+
+// Tool to generate images
+server.registerTool("generate_image",
   {
-    title: "Generate Image (FLUX.1 [dev])",
-    description: "Generate an image using FLUX.1 [dev] model. Waits for completion and returns the image URL.",
+    title: "Generate Image",
+    description: "Generate an image using a FLUX model. By default waits for completion and returns the image URL. Set wait=false to return immediately with request ID.",
     inputSchema: {
       prompt: z.string().describe("Text description of the desired image"),
-      aspect_ratio: z.string().optional().describe("Image aspect ratio (e.g., '1:1', '16:9', '9:16'). Default: '1:1'"),
-      width: z.number().optional().describe("Image width in pixels"),
-      height: z.number().optional().describe("Image height in pixels"),
-      num_images: z.number().optional().describe("Number of images to generate (1-4). Default: 1"),
-      safety_tolerance: z.number().optional().describe("Safety tolerance level (0-6). Default: 2")
+      model: z.enum(['flux-dev', 'flux-pro', 'flux-pro-ultra', 'flux-kontext-pro', 'flux-kontext-max']).describe("Model to use for generation: 'flux-dev' (FLUX.1 [dev]), 'flux-pro' (FLUX 1.1 [pro]), 'flux-pro-ultra' (FLUX 1.1 [pro] Ultra), 'flux-kontext-pro' (FLUX Kontext Pro), 'flux-kontext-max' (FLUX Kontext Max)"),
+      wait: z.boolean().default(true).describe("Whether to wait for generation to complete. If true, polls until ready. If false, returns request ID immediately"),
+
+      // Image inputs
+      image_prompt: z.string().optional().describe("Base64 encoded image for Flux Redux (flux-pro, flux-pro-ultra) or image remixing (flux-pro-ultra)"),
+      input_image: z.string().optional().describe("Base64 encoded image or URL to use with Kontext (flux-kontext-pro, flux-kontext-max)"),
+      input_image_2: z.string().optional().describe("Additional reference image for experimental Multiref (flux-kontext-pro, flux-kontext-max)"),
+      input_image_3: z.string().optional().describe("Additional reference image for experimental Multiref (flux-kontext-pro, flux-kontext-max)"),
+      input_image_4: z.string().optional().describe("Additional reference image for experimental Multiref (flux-kontext-pro, flux-kontext-max)"),
+
+      // Dimensions
+      aspect_ratio: z.string().optional().describe("Image aspect ratio (e.g., '1:1', '16:9', '9:16', '21:9'). Used by flux-pro-ultra, flux-kontext-pro, flux-kontext-max"),
+      width: z.number().optional().describe("Image width in pixels (256-1440, multiple of 32). Used by flux-pro"),
+      height: z.number().optional().describe("Image height in pixels (256-1440, multiple of 32). Used by flux-pro"),
+
+      // Generation parameters
+      seed: z.number().optional().describe("Seed for reproducibility. Optional for all models"),
+      prompt_upsampling: z.boolean().optional().describe("Whether to perform upsampling on the prompt. Available for all models"),
+      safety_tolerance: z.number().optional().describe("Safety tolerance level (0-6, default: 2). Available for all models"),
+      output_format: z.enum(['jpeg', 'png']).optional().describe("Output format (default: 'jpeg' for flux-pro/pro-ultra, 'png' for kontext models)"),
+
+      // Pro Ultra specific
+      raw: z.boolean().optional().describe("Generate less processed, more natural-looking images. Only for flux-pro-ultra"),
+      image_prompt_strength: z.number().optional().describe("Blend strength between prompt and image_prompt (0-1, default: 0.1). Only for flux-pro-ultra")
     }
   },
-  async ({ prompt, aspect_ratio, width, height, num_images, safety_tolerance }) => {
+  async ({ prompt, model, wait, image_prompt, input_image, input_image_2, input_image_3, input_image_4, aspect_ratio, width, height, seed, prompt_upsampling, safety_tolerance, output_format, raw, image_prompt_strength }) => {
     try {
+      const endpoint = MODEL_ENDPOINTS[model];
+      if (!endpoint) {
+        return {
+          content: [{ type: "text", text: `Invalid model: ${model}. Valid options: ${Object.keys(MODEL_ENDPOINTS).join(", ")}` }]
+        };
+      }
+
       const requestBody: ImageGenerationRequest = {
-        prompt,
+        ...(prompt && { prompt }),
+        ...(image_prompt && { image_prompt }),
+        ...(input_image && { input_image }),
+        ...(input_image_2 && { input_image_2 }),
+        ...(input_image_3 && { input_image_3 }),
+        ...(input_image_4 && { input_image_4 }),
         ...(aspect_ratio && { aspect_ratio }),
         ...(width && { width }),
         ...(height && { height }),
-        ...(num_images && { num_images }),
-        ...(safety_tolerance !== undefined && { safety_tolerance })
+        ...(seed !== undefined && { seed }),
+        ...(prompt_upsampling !== undefined && { prompt_upsampling }),
+        ...(safety_tolerance !== undefined && { safety_tolerance }),
+        ...(output_format && { output_format }),
+        ...(raw !== undefined && { raw }),
+        ...(image_prompt_strength !== undefined && { image_prompt_strength })
       };
 
-      const initResponse = await makeBFLRequest("/v1/flux-dev", requestBody);
+      const initResponse = await makeBFLRequest(endpoint, requestBody);
 
-      activeRequests.set(initResponse.id, {
-        id: initResponse.id,
-        model: "flux-dev",
-        prompt,
-        status: "Pending",
-        createdAt: new Date()
-      });
+      if (!wait) {
+        return {
+          content: [{ type: "text", text: `Image generation request submitted.\n\nRequest ID: ${initResponse.id}\nModel: ${model}\n\nUse the bfl://requests/${initResponse.id} resource to check status.` }]
+        };
+      }
 
-      const result = await pollUntilComplete(initResponse.id);
+      const result = await pollUntilComplete(initResponse.polling_url);
 
       if (result.status === "Error") {
-        activeRequests.get(initResponse.id)!.status = "Error";
-        activeRequests.get(initResponse.id)!.error = result.error;
         return {
           content: [{ type: "text", text: `Image generation failed: ${result.error}` }]
         };
       }
 
-      activeRequests.get(initResponse.id)!.status = "Ready";
-      activeRequests.get(initResponse.id)!.result = result.result?.sample;
-
       return {
         content: [
-          { type: "text", text: `Image generated successfully!\n\nRequest ID: ${initResponse.id}\nImage URL: ${result.result?.sample}\n\nNote: URL is valid for 10 minutes.` }
+          { type: "text", text: `Image generated successfully!\n\nRequest ID: ${initResponse.id}\nModel: ${model}\nImage URL: ${result.result?.sample}\n\nNote: URL is valid for 10 minutes.` }
         ]
       };
     } catch (error) {
@@ -163,208 +215,12 @@ server.registerTool("generate_image_flux_dev",
         content: [{ type: "text", text: `Failed to generate image: ${error}` }]
       };
     }
-  }
-);
-
-// Tool to generate images with FLUX.1 [pro]
-server.registerTool("generate_image_flux_pro",
-  {
-    title: "Generate Image (FLUX.1 [pro])",
-    description: "Generate an image using FLUX.1 [pro] model. Waits for completion and returns the image URL.",
-    inputSchema: {
-      prompt: z.string().describe("Text description of the desired image"),
-      aspect_ratio: z.string().optional().describe("Image aspect ratio (e.g., '1:1', '16:9', '9:16'). Default: '1:1'"),
-      width: z.number().optional().describe("Image width in pixels"),
-      height: z.number().optional().describe("Image height in pixels"),
-      num_images: z.number().optional().describe("Number of images to generate (1-4). Default: 1"),
-      safety_tolerance: z.number().optional().describe("Safety tolerance level (0-6). Default: 2")
-    }
-  },
-  async ({ prompt, aspect_ratio, width, height, num_images, safety_tolerance }) => {
-    try {
-      const requestBody: ImageGenerationRequest = {
-        prompt,
-        ...(aspect_ratio && { aspect_ratio }),
-        ...(width && { width }),
-        ...(height && { height }),
-        ...(num_images && { num_images }),
-        ...(safety_tolerance !== undefined && { safety_tolerance })
-      };
-
-      const initResponse = await makeBFLRequest("/v1/flux-pro-1.1", requestBody);
-
-      activeRequests.set(initResponse.id, {
-        id: initResponse.id,
-        model: "flux-pro-1.1",
-        prompt,
-        status: "Pending",
-        createdAt: new Date()
-      });
-
-      const result = await pollUntilComplete(initResponse.id);
-
-      if (result.status === "Error") {
-        activeRequests.get(initResponse.id)!.status = "Error";
-        activeRequests.get(initResponse.id)!.error = result.error;
-        return {
-          content: [{ type: "text", text: `Image generation failed: ${result.error}` }]
-        };
-      }
-
-      activeRequests.get(initResponse.id)!.status = "Ready";
-      activeRequests.get(initResponse.id)!.result = result.result?.sample;
-
-      return {
-        content: [
-          { type: "text", text: `Image generated successfully!\n\nRequest ID: ${initResponse.id}\nImage URL: ${result.result?.sample}\n\nNote: URL is valid for 10 minutes.` }
-        ]
-      };
-    } catch (error) {
-      return {
-        content: [{ type: "text", text: `Failed to generate image: ${error}` }]
-      };
-    }
-  }
-);
-
-// Tool to generate images with FLUX.1.1 [pro] ultra
-server.registerTool("generate_image_flux_pro_ultra",
-  {
-    title: "Generate Image (FLUX1.1 [pro] Ultra)",
-    description: "Generate a high-resolution image (up to 4MP) using FLUX1.1 [pro] Ultra model. Waits for completion and returns the image URL.",
-    inputSchema: {
-      prompt: z.string().describe("Text description of the desired image"),
-      aspect_ratio: z.string().optional().describe("Image aspect ratio (e.g., '1:1', '16:9', '9:16'). Default: '1:1'"),
-      width: z.number().optional().describe("Image width in pixels"),
-      height: z.number().optional().describe("Image height in pixels"),
-      safety_tolerance: z.number().optional().describe("Safety tolerance level (0-6). Default: 2")
-    }
-  },
-  async ({ prompt, aspect_ratio, width, height, safety_tolerance }) => {
-    try {
-      const requestBody: ImageGenerationRequest = {
-        prompt,
-        ...(aspect_ratio && { aspect_ratio }),
-        ...(width && { width }),
-        ...(height && { height }),
-        ...(safety_tolerance !== undefined && { safety_tolerance })
-      };
-
-      const initResponse = await makeBFLRequest("/v1/flux-pro-1.1-ultra", requestBody);
-
-      activeRequests.set(initResponse.id, {
-        id: initResponse.id,
-        model: "flux-pro-1.1-ultra",
-        prompt,
-        status: "Pending",
-        createdAt: new Date()
-      });
-
-      const result = await pollUntilComplete(initResponse.id);
-
-      if (result.status === "Error") {
-        activeRequests.get(initResponse.id)!.status = "Error";
-        activeRequests.get(initResponse.id)!.error = result.error;
-        return {
-          content: [{ type: "text", text: `Image generation failed: ${result.error}` }]
-        };
-      }
-
-      activeRequests.get(initResponse.id)!.status = "Ready";
-      activeRequests.get(initResponse.id)!.result = result.result?.sample;
-
-      return {
-        content: [
-          { type: "text", text: `Image generated successfully!\n\nRequest ID: ${initResponse.id}\nImage URL: ${result.result?.sample}\n\nNote: URL is valid for 10 minutes.` }
-        ]
-      };
-    } catch (error) {
-      return {
-        content: [{ type: "text", text: `Failed to generate image: ${error}` }]
-      };
-    }
-  }
-);
-
-// Tool to check status of a request
-server.registerTool("get_request_status",
-  {
-    title: "Get Request Status",
-    description: "Check the status of an image generation request by ID",
-    inputSchema: {
-      requestId: z.string().describe("The request ID to check")
-    }
-  },
-  async ({ requestId }) => {
-    try {
-      const result = await getResult(requestId);
-
-      if (activeRequests.has(requestId)) {
-        const request = activeRequests.get(requestId)!;
-        request.status = result.status;
-        if (result.status === "Ready") {
-          request.result = result.result?.sample;
-        } else if (result.status === "Error") {
-          request.error = result.error;
-        }
-      }
-
-      let responseText = `Request ID: ${requestId}\nStatus: ${result.status}`;
-
-      if (result.status === "Ready" && result.result) {
-        responseText += `\nImage URL: ${result.result.sample}\n\nNote: URL is valid for 10 minutes.`;
-      } else if (result.status === "Error") {
-        responseText += `\nError: ${result.error}`;
-      }
-
-      return {
-        content: [{ type: "text", text: responseText }]
-      };
-    } catch (error) {
-      return {
-        content: [{ type: "text", text: `Failed to get status: ${error}` }]
-      };
-    }
-  }
-);
-
-// Resource to list all requests
-server.registerResource("requests_list", "bfl://requests/",
-  {
-    title: "Image Generation Requests",
-    description: "List all image generation requests",
-    mimeType: "application/json"
-  },
-  async (uri) => {
-    const requests = Array.from(activeRequests.values()).map(req => ({
-      id: req.id,
-      model: req.model,
-      prompt: req.prompt,
-      status: req.status,
-      createdAt: req.createdAt.toISOString(),
-      result: req.result,
-      error: req.error
-    }));
-
-    return {
-      contents: [{
-        uri: uri.href,
-        text: JSON.stringify(requests, null, 2)
-      }]
-    };
   }
 );
 
 // Resource to get details of a specific request
 server.registerResource("request_details", new ResourceTemplate("bfl://requests/{requestId}", {
-  list: async () => {
-    const resources = Array.from(activeRequests.keys()).map(requestId => ({
-      uri: `bfl://requests/${requestId}`,
-      name: `request-${requestId}`,
-      mimeType: "application/json"
-    }));
-    return { resources };
-  }
+  list: undefined,
 }),
   {
     title: "Request Details",
@@ -372,28 +228,25 @@ server.registerResource("request_details", new ResourceTemplate("bfl://requests/
     mimeType: "application/json"
   },
   async (uri, { requestId }) => {
-    const request = activeRequests.get(requestId as string);
+    try {
+      const result = await getResultById(requestId as string);
 
-    if (!request) {
-      throw new Error(`No request found with ID: ${requestId}`);
+      const details = {
+        id: result.id,
+        status: result.status,
+        result: result.result?.sample,
+        error: result.error
+      };
+
+      return {
+        contents: [{
+          uri: uri.href,
+          text: JSON.stringify(details, null, 2)
+        }]
+      };
+    } catch (error) {
+      throw new Error(`Failed to fetch request details: ${error}`);
     }
-
-    const details = {
-      id: request.id,
-      model: request.model,
-      prompt: request.prompt,
-      status: request.status,
-      createdAt: request.createdAt.toISOString(),
-      result: request.result,
-      error: request.error
-    };
-
-    return {
-      contents: [{
-        uri: uri.href,
-        text: JSON.stringify(details, null, 2)
-      }]
-    };
   }
 );
 
