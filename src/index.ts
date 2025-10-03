@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import "dotenv/config";
 import { z } from "zod";
 
 // Get BFL API key from environment variable
