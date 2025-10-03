@@ -5,7 +5,10 @@
   "author": "Justin Spahr-Summers <justin@fernforestgames.com> (https://fernforestgames.com)",
   "license": "MIT",
   "homepage": "https://github.com/fernforestgames/mcp-server-bfl",
-  "repository": "github:fernforestgames/mcp-server-bfl",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fernforestgames/mcp-server-bfl.git"
+  },
   "type": "module",
   "scripts": {
     "build": "tsc && shx chmod +x dist/*.js",
