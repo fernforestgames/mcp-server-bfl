@@ -212,7 +212,14 @@ server.registerTool("generate_image",
 
       if (!wait) {
         return {
-          content: [{ type: "text", text: `Image generation request submitted.\n\nRequest ID: ${initResponse.id}\nModel: ${model}\n\nUse the bfl://requests/${initResponse.id} resource to check status.` }]
+          content: [{ type: "text", text: `
+Image generation request submitted.
+
+Request ID: ${initResponse.id}
+Model: ${model}
+
+Use the bfl://requests/${initResponse.id} resource to check status.
+`.trim() }]
         };
       }
 
@@ -226,7 +233,16 @@ server.registerTool("generate_image",
 
       return {
         content: [
-          { type: "text", text: `Image generated successfully!\n\nRequest ID: ${initResponse.id}\nModel: ${model}\nImage URL: ${result.result?.sample}\n\nNote: URL is valid for 10 minutes.` }
+          { type: "text", text: `
+Image generated successfully!
+
+Request ID: ${initResponse.id}
+Model: ${model}
+Image URL: ${result.result?.sample}
+(Note: the image URL is only valid for 10 minutes.)
+
+You can also use the bfl://images/${initResponse.id} resource to view the image directly.
+`.trim() }
         ]
       };
     } catch (error) {
