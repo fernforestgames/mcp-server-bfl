@@ -306,7 +306,7 @@ server.registerTool("download_image",
       }
 
       const writeStream = fs.createWriteStream(file_path);
-      await pipeline(Readable.fromWeb(imageResponse.body as any), writeStream);
+      await pipeline(Readable.fromWeb(imageResponse.body), writeStream);
 
       return {
         content: [{ type: "text", text: `Image downloaded successfully to ${file_path}` }]
@@ -383,7 +383,7 @@ server.registerResource("image", new ResourceTemplate("bfl://images/{requestId}"
       }
 
       // Determine MIME type from Content-Type header
-      let mimeType = imageResponse.headers.get('content-type') || 'image/jpeg';
+      const mimeType = imageResponse.headers.get('content-type') || 'image/jpeg';
 
       // Get the image as base64
       const imageBuffer = await imageResponse.arrayBuffer();

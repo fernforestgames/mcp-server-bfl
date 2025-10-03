@@ -21,8 +21,9 @@ export default [
       '@typescript-eslint': tseslint,
     },
     rules: {
-      '@typescript-eslint/no-unused-vars': 'error',
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
       '@typescript-eslint/no-explicit-any': 'warn',
+      'no-unused-vars': 'off', // Disabled in favor of @typescript-eslint/no-unused-vars
       'prefer-const': 'error',
       'no-var': 'error',
     },
