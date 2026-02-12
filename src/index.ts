@@ -27,7 +27,7 @@ const imageGenerationResponseSchema = z.object({
 
 const resultResponseSchema = z.object({
   id: z.string(),
-  status: z.enum(["Pending", "Ready", "Error", "Failed"]),
+  status: z.string(),
   result: z.object({
     sample: z.string()
   }).nullish(),
@@ -98,7 +98,7 @@ async function pollUntilComplete(pollingUrl: string, maxAttempts = 60, intervalM
   for (let i = 0; i < maxAttempts; i++) {
     const result = await getResult(pollingUrl);
 
-    if (result.status === "Ready" || result.status === "Error" || result.status === "Failed") {
+    if (result.status !== "Pending") {
       return result;
     }
 
@@ -243,9 +243,9 @@ Use the bfl://requests/${initResponse.id} resource to check status.
 
       const result = await pollUntilComplete(initResponse.polling_url);
 
-      if (result.status === "Error" || result.status === "Failed") {
+      if (result.status !== "Ready") {
         return {
-          content: [{ type: "text", text: `Image generation failed: ${result.error}` }]
+          content: [{ type: "text", text: `Image generation failed (status: ${result.status}): ${result.error}` }]
         };
       }
 
@@ -285,9 +285,9 @@ server.registerTool("download_image",
     try {
       const result = await getResultById(request_id);
 
-      if (result.status === "Error" || result.status === "Failed") {
+      if (result.status !== "Ready" && result.status !== "Pending") {
         return {
-          content: [{ type: "text", text: `Image generation failed: ${result.error}` }]
+          content: [{ type: "text", text: `Image generation failed (status: ${result.status}): ${result.error}` }]
         };
       }
 
@@ -381,8 +381,8 @@ server.registerResource("image", new ResourceTemplate("bfl://images/{requestId}"
     try {
       const result = await getResultById(requestId as string);
 
-      if (result.status === "Error" || result.status === "Failed") {
-        throw new Error(`Image generation failed: ${result.error}`);
+      if (result.status !== "Ready" && result.status !== "Pending") {
+        throw new Error(`Image generation failed (status: ${result.status}): ${result.error}`);
       }
 
       if (result.status === "Pending") {
