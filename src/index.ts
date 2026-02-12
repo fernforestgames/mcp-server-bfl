@@ -27,7 +27,7 @@ const imageGenerationResponseSchema = z.object({
 
 const resultResponseSchema = z.object({
   id: z.string(),
-  status: z.enum(["Pending", "Ready", "Error"]),
+  status: z.enum(["Pending", "Ready", "Error", "Failed"]),
   result: z.object({
     sample: z.string()
   }).nullish(),
@@ -98,7 +98,7 @@ async function pollUntilComplete(pollingUrl: string, maxAttempts = 60, intervalM
   for (let i = 0; i < maxAttempts; i++) {
     const result = await getResult(pollingUrl);
 
-    if (result.status === "Ready" || result.status === "Error") {
+    if (result.status === "Ready" || result.status === "Error" || result.status === "Failed") {
       return result;
     }
 
@@ -110,80 +110,98 @@ async function pollUntilComplete(pollingUrl: string, maxAttempts = 60, intervalM
 
 // Model endpoint mapping
 const MODEL_ENDPOINTS: Record<string, string> = {
-  "flux-dev": "/v1/flux-dev",
-  "flux-pro": "/v1/flux-pro-1.1",
-  "flux-pro-ultra": "/v1/flux-pro-1.1-ultra",
-  "flux-kontext-pro": "/v1/flux-kontext-pro",
-  "flux-kontext-max": "/v1/flux-kontext-max"
+  "flux-2-pro": "/v1/flux-2-pro",
+  "flux-2-max": "/v1/flux-2-max",
+  "flux-2-flex": "/v1/flux-2-flex",
+  "flux-2-klein-9b": "/v1/flux-2-klein-9b",
+  "flux-2-klein-4b": "/v1/flux-2-klein-4b"
 };
 
 // Common parameters shared across all models
 const commonParams = {
   wait: z.boolean().default(true).describe("Whether to wait for generation to complete. If true, polls until ready. If false, returns request ID immediately"),
   seed: z.number().optional().describe("Seed for reproducibility"),
-  prompt_upsampling: z.boolean().optional().describe("Whether to perform upsampling on the prompt"),
-  safety_tolerance: z.number().optional().describe("Safety tolerance level (0-6, default: 2)"),
-  output_format: z.enum(['jpeg', 'png']).optional().describe("Output format (default: 'jpeg' for flux-pro/pro-ultra, 'png' for kontext models)")
+  safety_tolerance: z.number().optional().describe("Safety tolerance level (0-5, default: 2)"),
+  output_format: z.enum(['jpeg', 'png']).optional().describe("Output format (default: 'jpeg')")
+};
+
+// Input image parameters for models supporting up to 8 reference images
+const multiRefParams8 = {
+  input_image: z.string().optional().describe("Base64 encoded image or URL for primary reference image"),
+  input_image_2: z.string().optional().describe("Additional reference image"),
+  input_image_3: z.string().optional().describe("Additional reference image"),
+  input_image_4: z.string().optional().describe("Additional reference image"),
+  input_image_5: z.string().optional().describe("Additional reference image"),
+  input_image_6: z.string().optional().describe("Additional reference image"),
+  input_image_7: z.string().optional().describe("Additional reference image"),
+  input_image_8: z.string().optional().describe("Additional reference image")
+};
+
+// Input image parameters for Klein models (up to 4 reference images)
+const multiRefParams4 = {
+  input_image: z.string().optional().describe("Base64 encoded image or URL for primary reference image"),
+  input_image_2: z.string().optional().describe("Additional reference image"),
+  input_image_3: z.string().optional().describe("Additional reference image"),
+  input_image_4: z.string().optional().describe("Additional reference image")
 };
 
 // Define schemas for each model type
-const fluxDevSchema = z.object({
-  model: z.literal('flux-dev'),
+const flux2ProSchema = z.object({
+  model: z.literal('flux-2-pro'),
   prompt: z.string().describe("Text description of the desired image"),
-  width: z.number().optional().describe("Image width in pixels (256-1440, multiple of 32)"),
-  height: z.number().optional().describe("Image height in pixels (256-1440, multiple of 32)"),
+  width: z.number().optional().describe("Image width in pixels (min 64, multiple of 16, max 4MP total)"),
+  height: z.number().optional().describe("Image height in pixels (min 64, multiple of 16, max 4MP total)"),
+  ...multiRefParams8,
   ...commonParams
 });
 
-const fluxProSchema = z.object({
-  model: z.literal('flux-pro'),
+const flux2MaxSchema = z.object({
+  model: z.literal('flux-2-max'),
   prompt: z.string().describe("Text description of the desired image"),
-  width: z.number().optional().describe("Image width in pixels (256-1440, multiple of 32)"),
-  height: z.number().optional().describe("Image height in pixels (256-1440, multiple of 32)"),
-  image_prompt: z.string().optional().describe("Base64 encoded image for Flux Redux"),
+  width: z.number().optional().describe("Image width in pixels (min 64, multiple of 16, max 4MP total)"),
+  height: z.number().optional().describe("Image height in pixels (min 64, multiple of 16, max 4MP total)"),
+  ...multiRefParams8,
   ...commonParams
 });
 
-const fluxProUltraSchema = z.object({
-  model: z.literal('flux-pro-ultra'),
+const flux2FlexSchema = z.object({
+  model: z.literal('flux-2-flex'),
   prompt: z.string().describe("Text description of the desired image"),
-  aspect_ratio: z.string().optional().describe("Image aspect ratio (e.g., '1:1', '16:9', '9:16', '21:9')"),
-  image_prompt: z.string().optional().describe("Base64 encoded image for Flux Redux or image remixing"),
-  image_prompt_strength: z.number().optional().describe("Blend strength between prompt and image_prompt (0-1, default: 0.1)"),
-  raw: z.boolean().optional().describe("Generate less processed, more natural-looking images"),
+  width: z.number().optional().describe("Image width in pixels (min 64, multiple of 16, max 4MP total)"),
+  height: z.number().optional().describe("Image height in pixels (min 64, multiple of 16, max 4MP total)"),
+  prompt_upsampling: z.boolean().optional().describe("Whether to enhance prompt interpretation (default: true)"),
+  guidance: z.number().optional().describe("Controls prompt adherence vs. realism (1.5-10, default: 5)"),
+  steps: z.number().optional().describe("Number of quality/detail iterations (1-50, default: 50)"),
+  ...multiRefParams8,
   ...commonParams
 });
 
-const fluxKontextProSchema = z.object({
-  model: z.literal('flux-kontext-pro'),
+const flux2Klein9bSchema = z.object({
+  model: z.literal('flux-2-klein-9b'),
   prompt: z.string().describe("Text description of the desired image"),
-  aspect_ratio: z.string().optional().describe("Image aspect ratio (e.g., '1:1', '16:9', '9:16', '21:9')"),
-  input_image: z.string().optional().describe("Base64 encoded image or URL to use with Kontext"),
-  input_image_2: z.string().optional().describe("Additional reference image for experimental Multiref"),
-  input_image_3: z.string().optional().describe("Additional reference image for experimental Multiref"),
-  input_image_4: z.string().optional().describe("Additional reference image for experimental Multiref"),
+  width: z.number().optional().describe("Image width in pixels (min 64, multiple of 16, max 4MP total)"),
+  height: z.number().optional().describe("Image height in pixels (min 64, multiple of 16, max 4MP total)"),
+  ...multiRefParams4,
   ...commonParams
 });
 
-const fluxKontextMaxSchema = z.object({
-  model: z.literal('flux-kontext-max'),
+const flux2Klein4bSchema = z.object({
+  model: z.literal('flux-2-klein-4b'),
   prompt: z.string().describe("Text description of the desired image"),
-  aspect_ratio: z.string().optional().describe("Image aspect ratio (e.g., '1:1', '16:9', '9:16', '21:9')"),
-  input_image: z.string().optional().describe("Base64 encoded image or URL to use with Kontext"),
-  input_image_2: z.string().optional().describe("Additional reference image for experimental Multiref"),
-  input_image_3: z.string().optional().describe("Additional reference image for experimental Multiref"),
-  input_image_4: z.string().optional().describe("Additional reference image for experimental Multiref"),
+  width: z.number().optional().describe("Image width in pixels (min 64, multiple of 16, max 4MP total)"),
+  height: z.number().optional().describe("Image height in pixels (min 64, multiple of 16, max 4MP total)"),
+  ...multiRefParams4,
   ...commonParams
 });
 
 // Union all schemas with discriminated union on 'model'
 const generateImageSchema = {
   params: z.discriminatedUnion('model', [
-    fluxDevSchema,
-    fluxProSchema,
-    fluxProUltraSchema,
-    fluxKontextProSchema,
-    fluxKontextMaxSchema
+    flux2ProSchema,
+    flux2MaxSchema,
+    flux2FlexSchema,
+    flux2Klein9bSchema,
+    flux2Klein4bSchema
   ])
 };
 
@@ -191,7 +209,7 @@ const generateImageSchema = {
 server.registerTool("generate_image",
   {
     title: "Generate Image",
-    description: "Generate an image using a FLUX model. By default waits for completion and returns the image URL. Set wait=false to return immediately with request ID.",
+    description: "Generate an image using a FLUX.2 model. All models support both text-to-image generation and multi-reference image editing. By default waits for completion and returns the image URL. Set wait=false to return immediately with request ID.",
     inputSchema: generateImageSchema
   },
   async ({ params }) => {
@@ -225,7 +243,7 @@ Use the bfl://requests/${initResponse.id} resource to check status.
 
       const result = await pollUntilComplete(initResponse.polling_url);
 
-      if (result.status === "Error") {
+      if (result.status === "Error" || result.status === "Failed") {
         return {
           content: [{ type: "text", text: `Image generation failed: ${result.error}` }]
         };
@@ -267,7 +285,7 @@ server.registerTool("download_image",
     try {
       const result = await getResultById(request_id);
 
-      if (result.status === "Error") {
+      if (result.status === "Error" || result.status === "Failed") {
         return {
           content: [{ type: "text", text: `Image generation failed: ${result.error}` }]
         };
@@ -363,7 +381,7 @@ server.registerResource("image", new ResourceTemplate("bfl://images/{requestId}"
     try {
       const result = await getResultById(requestId as string);
 
-      if (result.status === "Error") {
+      if (result.status === "Error" || result.status === "Failed") {
         throw new Error(`Image generation failed: ${result.error}`);
       }
 
