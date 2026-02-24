@@ -271,11 +271,26 @@ You can also use the bfl://images/${initResponse.id} resource to view the image 
   }
 );
 
+// Helper function to poll by request ID until completion
+async function pollByIdUntilComplete(requestId: string, maxAttempts = 60, intervalMs = 2000): Promise<ResultResponse> {
+  for (let i = 0; i < maxAttempts; i++) {
+    const result = await getResultById(requestId);
+
+    if (result.status !== "Pending") {
+      return result;
+    }
+
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  }
+
+  throw new Error(`Polling timeout after ${maxAttempts} attempts`);
+}
+
 // Tool to download image to disk
 server.registerTool("download_image",
   {
     title: "Download Image to Disk",
-    description: "Download the image associated with a specific request ID to a file on disk",
+    description: "Download the image associated with a specific request ID to a file on disk. If the image is still being generated, waits for completion before downloading.",
     inputSchema: {
       request_id: z.string().describe("The request ID of the image generation"),
       file_path: z.string().describe("The file path where the image should be saved")
@@ -283,17 +298,11 @@ server.registerTool("download_image",
   },
   async ({ request_id, file_path }) => {
     try {
-      const result = await getResultById(request_id);
+      const result = await pollByIdUntilComplete(request_id);
 
-      if (result.status !== "Ready" && result.status !== "Pending") {
+      if (result.status !== "Ready") {
         return {
           content: [{ type: "text", text: `Image generation failed (status: ${result.status}): ${result.error}` }]
-        };
-      }
-
-      if (result.status === "Pending") {
-        return {
-          content: [{ type: "text", text: `Image generation is still pending. Please wait for it to complete.` }]
         };
       }
 
