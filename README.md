@@ -1,5 +1,7 @@
 # Black Forest Labs MCP Server ![NPM Version](https://img.shields.io/npm/v/%40fernforestgames%2Fmcp-server-bfl)
 
+## **Deprecated in favor of the [official MCP server](https://docs.bfl.ai/api_integration/mcp_integration), now available!**
+
 A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that provides AI assistants with tools to generate images using the [Black Forest Labs](https://bfl.ai) API. This server enables text-to-image generation using FLUX models.
 
 ## Features
